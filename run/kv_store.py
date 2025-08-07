@@ -34,17 +34,14 @@ class SimpleKVStore:
                 with open(index_path, 'rb') as f:
                     self.index = pickle.load(f)
                 
-                # 清理并加载有效数据
                 current_time = time.time()
                 expired_keys = []
                 
                 for key, info in self.index.items():
-                    # 检查是否过期
                     if info['expiry'] is not None and current_time >= info['expiry']:
                         expired_keys.append(key)
                         continue
                     
-                    # 加载未过期的数据
                     data_path = os.path.join(self.storage_dir, f"{key}.pkl")
                     if os.path.exists(data_path):
                         try:
@@ -54,11 +51,9 @@ class SimpleKVStore:
                             print(f"数据文件损坏，跳过: {key}")
                             expired_keys.append(key)
                 
-                # 清理过期键
                 for key in expired_keys:
                     self.delete(key, update_index=False)
                 
-                # 保存更新后的索引
                 self._save_index()
                 
         except Exception as e:
@@ -84,26 +79,21 @@ class SimpleKVStore:
             raise ValueError("键必须是字符串类型")
             
         try:
-            # 内存中更新数据
             self.data[key] = value
             
-            # 保存数据到文件
             data_path = os.path.join(self.storage_dir, f"{key}.pkl")
             with open(data_path, 'wb') as f:
                 pickle.dump(value, f)
                 
-            # 更新内存索引
             self.index[key] = {
                 'timestamp': time.time(),
                 'expiry': expiry
             }
-            
-            # 保存索引
+
             self._save_index()
             
         except Exception as e:
             print(f"设置键值对失败 ({key}): {str(e)}")
-            # 回滚内存数据
             if key in self.data:
                 del self.data[key]
     
@@ -114,9 +104,8 @@ class SimpleKVStore:
         :param default: 默认值
         :return: 存储的值或默认值
         """
-        # 先检查内存中的数据
         if key in self.data:
-            # 检查是否过期
+            
             if key in self.index:
                 info = self.index[key]
                 if info['expiry'] is not None and time.time() >= info['expiry']:
@@ -124,20 +113,18 @@ class SimpleKVStore:
                     return default
             return self.data[key]
         
-        # 内存中没有则检查文件
         data_path = os.path.join(self.storage_dir, f"{key}.pkl")
         if os.path.exists(data_path) and key in self.index:
             info = self.index[key]
-            # 检查过期
+
             if info['expiry'] is not None and time.time() >= info['expiry']:
                 self.delete(key)
                 return default
                 
-            # 从文件加载
             try:
                 with open(data_path, 'rb') as f:
                     value = pickle.load(f)
-                self.data[key] = value  # 加载到内存
+                self.data[key] = value  
                 return value
             except (pickle.UnpicklingError, EOFError):
                 print(f"数据文件损坏，删除: {key}")
@@ -152,17 +139,14 @@ class SimpleKVStore:
         :param key: 键
         :param update_index: 是否更新索引文件
         """
-        # 从内存删除
         if key in self.data:
             del self.data[key]
         
-        # 从索引删除
         if key in self.index:
             del self.index[key]
             if update_index:
                 self._save_index()
         
-        # 删除数据文件
         data_path = os.path.join(self.storage_dir, f"{key}.pkl")
         if os.path.exists(data_path):
             try:
@@ -172,7 +156,7 @@ class SimpleKVStore:
     
     def keys(self) -> Iterable[str]:
         """返回所有有效键"""
-        self.clear_expired()  # 先清理过期键
+        self.clear_expired()  
         return self.data.keys()
     
     def clear_expired(self) -> int:
@@ -189,7 +173,6 @@ class SimpleKVStore:
         for key in expired_keys:
             self.delete(key, update_index=False)
         
-        # 批量更新索引
         if expired_keys:
             self._save_index()
             
@@ -198,11 +181,10 @@ class SimpleKVStore:
     def clear_all(self) -> None:
         """清空所有数据"""
         try:
-            # 清空内存数据
+            
             self.data.clear()
             self.index.clear()
             
-            # 删除所有文件
             if os.path.exists(self.storage_dir):
                 for filename in os.listdir(self.storage_dir):
                     file_path = os.path.join(self.storage_dir, filename)
@@ -212,7 +194,6 @@ class SimpleKVStore:
                     except Exception as e:
                         print(f"删除文件失败 ({file_path}): {str(e)}")
             
-            # 重建空索引
             self._save_index()
             print("已清空所有KV存储数据")
         except Exception as e:
@@ -303,3 +284,4 @@ class CacheManager:
     def clear_all_cache(self) -> None:
         """清空所有缓存"""
         self.kv_store.clear_all()
+
