@@ -1,0 +1,243 @@
+import pandas as pd
+import numpy as np
+import lightgbm as lgb
+from sklearn.model_selection import train_test_split
+import os
+from collections import defaultdict
+
+class SimpleRanker:
+    """轻量级排序模型（优化版）"""
+    def __init__(self, model_path='models/ranker_model.txt'):
+        self.model = None
+        self.model_path = model_path
+        # 扩展特征列表，增加用户行为和交互特征
+        self.features = [
+            'user_age', 'user_gender', 'user_occupation', 
+            'item_rating_mean', 'item_rating_count', 'is_popular',
+            'user_rating_std', 'user_interaction_count',
+            'user_item_rating_history'
+        ]
+        self.item_stats = None  # 缓存物品统计特征
+        self.user_stats = None  # 缓存用户行为特征
+        self.user_item_history = None  # 缓存用户-物品历史评分
+        self._load_model()
+        
+    def _load_model(self):
+        """加载已训练的模型"""
+        if os.path.exists(self.model_path):
+            try:
+                self.model = lgb.Booster(model_file=self.model_path)
+                print("已加载预训练排序模型")
+            except Exception as e:
+                print(f"加载模型失败，将重新训练: {str(e)}")
+                self.model = None
+    
+    def _save_model(self):
+        """保存模型"""
+        if not os.path.exists('models'):
+            os.makedirs('models')
+        self.model.save_model(self.model_path)
+    
+    def _precompute_stats(self, ratings_df):
+        """预计算物品和用户的统计特征（提升性能）"""
+        # 物品统计特征
+        self.item_stats = ratings_df.groupby('item_id').agg({
+            'rating': ['mean', 'count']
+        }).reset_index()
+        self.item_stats.columns = ['item_id', 'rating_mean', 'rating_count']
+        
+        # 热门物品标记（70%分位数）
+        popular_threshold = self.item_stats['rating_count'].quantile(0.7) if not self.item_stats.empty else 0
+        self.item_stats['is_popular'] = (self.item_stats['rating_count'] >= popular_threshold).astype(int)
+        
+        # 用户行为特征
+        self.user_stats = ratings_df.groupby('user_id').agg({
+            'rating': ['std', 'count'],  # 评分标准差、交互物品数
+        }).reset_index()
+        self.user_stats.columns = ['user_id', 'user_rating_std', 'user_interaction_count']
+        
+        # 填充缺失值
+        self.user_stats['user_rating_std'] = self.user_stats['user_rating_std'].fillna(0)
+        self.user_stats['user_interaction_count'] = self.user_stats['user_interaction_count'].fillna(0)
+
+        # 缓存用户-物品历史评分（使用(user_id, item_id)作为键，rating作为值）
+        self.user_item_history = {
+            (row['user_id'], row['item_id']): row['rating']
+            for _, row in ratings_df[['user_id', 'item_id', 'rating']].iterrows()
+        }
+    
+    def _prepare_features(self, user_id, item_ids, users_df, ratings_df):
+        """为用户-物品对准备特征"""
+        # 预计算统计特征（仅第一次调用时）
+        if self.item_stats is None or self.user_stats is None:
+            self._precompute_stats(ratings_df)
+        
+        features = defaultdict(list)
+        
+        # 获取用户基础特征（容错处理）
+        try:
+            user = users_df[users_df['user_id'] == user_id].iloc[0]
+            user_age = user['age']
+            user_gender = user['gender_code']
+            user_occ = user['occupation_code']
+        except (IndexError, KeyError):
+            user_age = users_df['age'].median() if not users_df.empty else 30
+            user_gender = 0
+            user_occ = 0
+        
+        # 获取用户行为特征（容错处理）
+        try:
+            user_stat = self.user_stats[self.user_stats['user_id'] == user_id].iloc[0]
+            user_rating_std = user_stat['user_rating_std']
+            user_interaction_count = user_stat['user_interaction_count']
+        except IndexError:
+            user_rating_std = self.user_stats['user_rating_std'].median() if not self.user_stats.empty else 0
+            user_interaction_count = 0
+        
+        # 遍历物品ID，构建特征
+        for item_id in item_ids:
+            # 获取物品特征（容错处理）
+            try:
+                item_data = self.item_stats[self.item_stats['item_id'] == item_id].iloc[0]
+                rating_mean = item_data['rating_mean']
+                rating_count = item_data['rating_count']
+                is_popular = item_data['is_popular']
+            except IndexError:
+                rating_mean = 3.0  # 默认平均值
+                rating_count = 0
+                is_popular = 0
+            
+            # 用户对该物品的历史评分（如有）
+            user_item_rating = self.user_item_history.get((user_id, item_id), 0)
+            
+            # 填充特征字典
+            features['user_age'].append(user_age)
+            features['user_gender'].append(user_gender)
+            features['user_occupation'].append(user_occ)
+            features['item_rating_mean'].append(rating_mean)
+            features['item_rating_count'].append(rating_count)
+            features['is_popular'].append(is_popular)
+            features['user_rating_std'].append(user_rating_std)
+            features['user_interaction_count'].append(user_interaction_count)
+            features['user_item_rating_history'].append(user_item_rating)
+        
+        return pd.DataFrame(features)
+    
+    def train(self, users_df, ratings_df, sample_size=100, min_samples=10):
+        """训练排序模型"""
+        if self.model is not None:
+            return  # 已加载模型，无需重新训练
+            
+        print("开始训练排序模型...")
+        # 准备训练数据
+        X, y = [], []
+        
+        # 确保有足够的用户可采样
+        all_users = ratings_df['user_id'].unique()
+        if len(all_users) < sample_size:
+            sample_size = len(all_users)  # 若用户不足，使用全部用户
+        sample_users = np.random.choice(all_users, size=sample_size, replace=False)
+        
+        for user_id in sample_users:
+            # 正例（高评分：4-5分）
+            pos_items = ratings_df[(ratings_df['user_id'] == user_id) & (ratings_df['rating'] >= 4)]['item_id'].tolist()
+            # 负例（低评分：1-2分 + 未交互物品）
+            neg_items = ratings_df[(ratings_df['user_id'] == user_id) & (ratings_df['rating'] <= 2)]['item_id'].tolist()
+            
+            # 若负例不足，用未交互物品补充
+            if len(neg_items) < 5:
+                all_items = ratings_df['item_id'].unique()
+                interacted_items = ratings_df[ratings_df['user_id'] == user_id]['item_id'].tolist()
+                non_interacted = list(set(all_items) - set(interacted_items))
+                neg_items += np.random.choice(non_interacted, size=max(0, 5 - len(neg_items)), replace=False).tolist()
+            
+            # 限制样本数量，避免不平衡
+            pos_items = pos_items[:5]
+            neg_items = neg_items[:5]
+            
+            # 为正例添加特征
+            pos_features = self._prepare_features(user_id, pos_items, users_df, ratings_df)
+            X.append(pos_features)
+            y.extend([1] * len(pos_items))
+            
+            # 为负例添加特征
+            neg_features = self._prepare_features(user_id, neg_items, users_df, ratings_df)
+            X.append(neg_features)
+            y.extend([0] * len(neg_items))
+        
+        # 合并所有特征
+        X = pd.concat(X, ignore_index=True) if X else pd.DataFrame(columns=self.features)
+        
+        # 检查样本量
+        if len(X) < min_samples or len(y) < min_samples:
+            raise Exception(f"训练样本不足（当前{len(X)}条），请增大sample_size")
+        
+        # 划分训练集和验证集
+        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
+        
+        # 训练LightGBM模型
+        lgb_train = lgb.Dataset(X_train, label=y_train)
+        lgb_val = lgb.Dataset(X_val, label=y_val, reference=lgb_train)
+        
+        params = {
+            'objective': 'binary',
+            'metric': 'auc',
+            'boosting_type': 'gbdt',
+            'learning_rate': 0.05,
+            'num_leaves': 31,
+            'verbose': -1,
+            'num_threads': 2,
+            'seed': 42
+        }
+        
+        self.model = lgb.train(
+            params,
+            lgb_train,
+            valid_sets=[lgb_val],
+            num_boost_round=100,
+            early_stopping_rounds=10,
+            verbose_eval=False
+        )
+        
+        # 保存模型
+        self._save_model()
+        print(f"排序模型训练完成（AUC: {self.model.best_score['valid_0']['auc']:.4f}）")
+        
+        return self
+    
+    def rank(self, user_id, candidate_items, users_df, ratings_df, return_scores=False):
+        """对候选物品进行排序"""
+        if not candidate_items:
+            return []  # 候选集为空时直接返回
+        
+        if self.model is None:
+            self.train(users_df, ratings_df)
+            
+        # 提取物品ID和召回分数
+        item_ids = [item_id for item_id, _ in candidate_items]
+        recall_scores = np.array([score for _, score in candidate_items])
+        
+        # 准备特征
+        features = self._prepare_features(user_id, item_ids, users_df, ratings_df)
+        
+        # 预测排序分数
+        try:
+            rank_scores = self.model.predict(features[self.features])
+        except Exception as e:
+            print(f"预测失败，使用召回分数排序: {str(e)}")
+            rank_scores = np.zeros_like(recall_scores)
+        
+        # 结合召回分数和排序分数（动态权重）
+        recall_weight = 0.4 if np.std(recall_scores) < 0.1 else 0.5
+        final_scores = recall_scores * recall_weight + rank_scores * (1 - recall_weight)
+        
+        # 排序并返回结果
+        sorted_items = sorted(
+            zip(item_ids, final_scores),
+            key=lambda x: x[1],
+            reverse=True
+        )
+        
+        if return_scores:
+            return sorted_items
+        return [item_id for item_id, _ in sorted_items]
