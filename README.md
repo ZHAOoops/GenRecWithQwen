@@ -59,6 +59,7 @@ mkdir data models kv_store
 pip install -r requirements.txt
 
 ## 📂 代码结构
+```
 GenRecWithQwen/
 ├── data/                  # 数据集目录（需手动创建）
 │   ├── ratings_processed.csv        # 用户-物品评分数据
@@ -76,6 +77,7 @@ GenRecWithQwen/
 ├── evaluate.py            # 评估脚本（计算召回率、NDCG等指标）
 ├── requirements.txt       # 依赖列表
 └── README.md              # 项目说明（本文档）
+```
 
 ## 运行结果
 ### 客户端封装后运行结果示例
@@ -92,9 +94,10 @@ Ollama生成完成，耗时: 44.35秒
 5. Inception
 
 ### 评估完成后运行结果示例
+```
 ===== 评估结果 =====
 平均召回率@10: XXXXX    # 推荐结果覆盖用户喜欢物品的比例
 平均准确率@10: XXXXX    # 推荐结果中用户喜欢物品的比例
 平均NDCG@10: XXXXX      # 排序质量（值越高越好，最大为1）
 平均响应时间: XXXXX秒   # 单次推荐耗时
-
+```
