@@ -3,17 +3,14 @@ import time
 from flask import Flask, request, jsonify
 import traceback
 
-# 导入组件
 from data_preparation import load_dataset, preprocess_data, build_user_preferences, build_prompt
 from ollama_client import OllamaClient
 from recall_modules import KeywordRecaller, LLMRecaller, merge_recalls
 from ranking_module import SimpleRanker
 from kv_store import SimpleKVStore, CacheManager
 
-# 初始化 Flask 应用
 app = Flask(__name__)
 
-# 全局变量 - 系统组件（使用线程锁确保多线程安全）
 system_components = None
 from threading import Lock
 system_lock = Lock()
@@ -25,25 +22,20 @@ def init_system(model_name="qwen2:7b"):
         start_time = time.time()
         
         try:
-            # 1. 加载数据
             print("加载数据...")
             ratings, movies, users = load_dataset()
             ratings, movies, users = preprocess_data(ratings, movies, users)
             
-            # 2. 初始化KV存储和缓存管理器
             print("初始化缓存系统...")
             kv_store = SimpleKVStore()
             cache_manager = CacheManager(kv_store)
             
-            # 3. 初始化用户偏好函数
             print("构建用户偏好模型...")
             user_preferences_func = build_user_preferences(ratings, movies)
             
-            # 4. 初始化Ollama客户端
             print(f"初始化Ollama客户端 (模型: {model_name})...")
             ollama_client = OllamaClient(model_name=model_name)
             
-            # 5. 初始化召回器
             print("初始化召回模块...")
             keyword_recaller = KeywordRecaller()
             keyword_recaller.fit(movies)
@@ -53,12 +45,11 @@ def init_system(model_name="qwen2:7b"):
                 movies_df=movies,
                 vectorizer=keyword_recaller.vectorizer
             )
-            llm_recaller.set_ratings_data(ratings)  # 设置评分数据用于fallback
+            llm_recaller.set_ratings_data(ratings) 
             
-            # 6. 初始化排序器
             print("初始化排序模块...")
             ranker = SimpleRanker()
-            ranker.train(users, ratings)  # 训练或加载模型
+            ranker.train(users, ratings)  
             
             print(f"系统初始化完成，耗时: {time.time() - start_time:.2f}秒")
             
@@ -110,7 +101,6 @@ def recommend():
         
         print(f"处理用户 {user_id} 的推荐请求 (top_k={top_k})...")
         
-        # 解包系统组件
         components = system_components
         ratings = components['ratings']
         movies = components['movies']
@@ -121,10 +111,8 @@ def recommend():
         llm_recaller = components['llm_recaller']
         ranker = components['ranker']
         
-        # 1. 先检查缓存
         cached_recs = cache_manager.get_cached_recommendations(user_id)
         if cached_recs:
-            # 截断到指定top_k
             cached_recs = cached_recs[:top_k]
             print(f"返回用户 {user_id} 的缓存推荐结果")
             return jsonify({
@@ -134,7 +122,6 @@ def recommend():
                 'recommendations': cached_recs
             })
         
-        # 2. 多召回融合
         print(f"为用户 {user_id} 生成召回结果...")
         candidates = merge_recalls(
             user_id=user_id,
@@ -144,7 +131,7 @@ def recommend():
             build_prompt_func=build_prompt,
             users=users,
             user_preferences_func=user_preferences_func,
-            top_k=min(top_k * 3, 50)  # 召回数量为排序数量的3倍，保证多样性
+            top_k=min(top_k * 3, 50) 
         )
         
         if not candidates:
@@ -152,8 +139,7 @@ def recommend():
                 'status': 'error',
                 'message': '无法生成候选物品'
             }), 500
-        
-        # 3. 排序
+
         print(f"为用户 {user_id} 排序推荐结果...")
         ranked_items = ranker.rank(
             user_id=user_id,
@@ -163,7 +149,6 @@ def recommend():
             return_scores=True
         )
         
-        # 4. 转换为电影信息（处理可能的物品ID不存在情况）
         recommendations = []
         movie_id_map = {row['item_id']: row for _, row in movies.iterrows()}  # 构建ID映射表提升效率
         for item_id, score in ranked_items[:top_k]:  # 截断到指定数量
@@ -182,7 +167,6 @@ def recommend():
                 'message': '未找到匹配的电影信息'
             }), 500
         
-        # 5. 缓存结果
         cache_manager.cache_recommendations(user_id, recommendations)
         
         print(f"完成用户 {user_id} 的推荐请求")
@@ -195,7 +179,6 @@ def recommend():
         })
         
     except ValueError as e:
-        # 处理参数错误
         return jsonify({
             'status': 'error',
             'message': f'参数错误: {str(e)}'
@@ -226,15 +209,13 @@ def clear_cache():
         clear_all = data.get('clear_all', False)
         
         if clear_all:
-            # 清除所有缓存（需明确确认）
             system_components['kv_store'].clear_all()
             return jsonify({
                 'status': 'success',
                 'message': '已清除所有缓存'
             })
         elif user_id is not None:
-            # 清除指定用户缓存
-            success = system_components['cache_manager'].clear_user_cache(user_id)
+        success = system_components['cache_manager'].clear_user_cache(user_id)
             if success:
                 return jsonify({
                     'status': 'success',
@@ -246,7 +227,6 @@ def clear_cache():
                     'message': f'清除用户 {user_id} 缓存失败（可能不存在）'
                 }), 404
         else:
-            # 清除过期缓存
             count = system_components['cache_manager'].clear_expired_cache()
             return jsonify({
                 'status': 'success',
@@ -287,7 +267,6 @@ def get_user_preferences():
         user_id = int(request.args.get('user_id', 1))
         components = system_components
         
-        # 检查缓存
         cached_prefs = components['cache_manager'].get_cached_preferences(user_id)
         if cached_prefs:
             return jsonify({
@@ -297,7 +276,6 @@ def get_user_preferences():
                 'source': 'cache'
             })
         
-        # 计算用户偏好
         prefs = components['user_preferences_func'](user_id)
         components['cache_manager'].cache_user_preferences(user_id, prefs)
         
@@ -315,7 +293,6 @@ def get_user_preferences():
         }), 500
 
 if __name__ == '__main__':
-    # 启动服务（生产环境建议关闭debug，使用多线程）
     print("启动推荐系统API服务...")
     app.run(
         host='0.0.0.0',
@@ -323,4 +300,5 @@ if __name__ == '__main__':
         debug=False,  # 生产环境关闭debug
         threaded=True,  # 开启多线程支持并发
         processes=1  # 单进程（避免模型重复加载）
+
     )
