@@ -102,3 +102,18 @@ Ollama生成完成，耗时: 44.35秒
 平均响应时间: XXXXX秒   # 单次推荐耗时
 ```
 <img width="1375" height="815" alt="image" src="https://github.com/user-attachments/assets/ffafe512-1d93-44a7-a697-76645fe68df6" />
+
+## 自定义配置
+你可以在推荐接口中指定模型参数（支持所有 Ollama 兼容模型）：
+```
+http://127.0.0.1:5000/recommend?user_id=1&model=llama3:8b
+```
+
+## 🤝 贡献指南
+欢迎通过以下方式参与项目：
+提交 issue 反馈 bug 或建议新功能
+Fork 仓库并提交 PR
+
+感谢你的停留，期待你的交流讨论或者不吝赐教
+
+项目地址：  https://github.com/ZHAOoops/GenRecWithQwen
