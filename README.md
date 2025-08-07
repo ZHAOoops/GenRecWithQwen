@@ -101,3 +101,4 @@ Ollama生成完成，耗时: 44.35秒
 平均NDCG@10: XXXXX      # 排序质量（值越高越好，最大为1）
 平均响应时间: XXXXX秒   # 单次推荐耗时
 ```
+<img width="1375" height="815" alt="image" src="https://github.com/user-attachments/assets/ffafe512-1d93-44a7-a697-76645fe68df6" />
