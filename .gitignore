@@ -1,0 +1,14 @@
+*.pyc
+__pycache__/
+*.py.backup
+*.py.old
+*.py.original
+*.log
+nohup.out
+.kv_store/
+data/ml-1m/
+data/ml-1m.zip
+.DS_Store
+.env
+config.local.py
+.ipynb_checkpoints/
